@@ -145,9 +145,11 @@
   }
   .brand{
     display:flex;
+    flex-direction:column;
     align-items:center;
-    gap:12px;
-    padding:0 6px 22px;
+    text-align:center;
+    gap:10px;
+    padding:6px 6px 22px;
     border-bottom:1px solid var(--line);
     margin-bottom:18px;
   }
@@ -158,19 +160,27 @@
   @keyframes spin{ to{ transform:rotate(360deg);} }
   @media (prefers-reduced-motion: reduce){ .compass{animation:none;} }
   .brand-avatar{
-    width:44px; height:44px; flex-shrink:0;
+    width:84px; height:84px; flex-shrink:0;
     border-radius:50%;
     object-fit:cover;
-    border:2px solid var(--brass);
-    box-shadow:0 3px 10px rgba(0,0,0,0.4);
+    border:3px solid var(--brass);
+    box-shadow:0 6px 16px rgba(0,0,0,0.45);
     display:block;
+  }
+  .brand-name{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    letter-spacing:2.5px;
+    color:var(--brass-bright);
+    text-transform:uppercase;
+    margin-top:-2px;
   }
   .brand h1{
     font-family:'Fraunces', serif;
     font-size:19px;
     font-weight:600;
     line-height:1.15;
-    margin:0;
+    margin:2px 0 0;
     letter-spacing:0.2px;
   }
   .brand span{
@@ -269,6 +279,7 @@
     color:var(--brass);
     margin-bottom:10px;
   }
+  .eyebrow-lg{ font-size:14.3px; }
   h2.title{
     font-family:'Fraunces', serif;
     font-weight:600;
@@ -341,6 +352,48 @@
     padding-left:10px;
   }
   .score-chip b{ display:block; color:var(--parchment); font-size:20px; font-family:'Fraunces',serif; font-weight:600;}
+
+  .level-select{ margin-top:28px; }
+  .level-select .level-label{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    letter-spacing:2px;
+    color:var(--text-dim);
+    margin-bottom:10px;
+  }
+  .level-options{ display:flex; gap:10px; flex-wrap:wrap; }
+  .level-btn{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:3px;
+    background:var(--ink);
+    border:1px solid var(--line);
+    color:var(--text);
+    font-family:'Work Sans', sans-serif;
+    padding:10px 16px;
+    border-radius:9px;
+    cursor:pointer;
+    transition:border-color .15s ease, background .15s ease, transform .15s ease;
+  }
+  .level-btn:hover{ border-color:var(--brass); transform:translateY(-1px); }
+  .level-btn .lvl-name{
+    font-family:'Fraunces', serif;
+    font-weight:600;
+    font-size:14px;
+    color:var(--parchment);
+  }
+  .level-btn .lvl-count{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10.5px;
+    color:var(--text-dim);
+    letter-spacing:.5px;
+  }
+  .level-btn.active{
+    background:rgba(201,154,62,0.14);
+    border-color:var(--brass);
+  }
+  .level-btn.active .lvl-count{ color:var(--brass-bright); }
 
   .grid{
     display:grid;
@@ -613,10 +666,11 @@
 <aside class="sidebar">
   <div class="brand">
     <img class="brand-avatar" id="sidebarAvatar" alt="Profº Rubens">
+    <div class="brand-name">Profº Rubens</div>
     <h1>Desafio<br>Geográfico<span>ATLAS INTERATIVO</span></h1>
   </div>
 
-  <div class="legend-label">LEGENDA</div>
+  <div class="legend-label">MENU</div>
   <nav id="nav"></nav>
 
   <div class="sidebar-foot">
@@ -635,11 +689,28 @@
         <h2>Explore o mundo,<br>uma pergunta por vez.</h2>
         <p>Sete expedições geográficas — bandeiras, capitais, continentes, moedas, idiomas, população e fatos do planeta. Escolha uma rota no mapa lateral e comece a navegar.</p>
         <div class="score-strip" id="homeScores"></div>
+        <div class="level-select">
+          <div class="level-label">NÍVEL DE DIFICULDADE</div>
+          <div class="level-options" id="levelOptions">
+            <button class="level-btn" data-level="8" type="button">
+              <span class="lvl-name">Marinheiro</span>
+              <span class="lvl-count">8 perguntas</span>
+            </button>
+            <button class="level-btn" data-level="12" type="button">
+              <span class="lvl-name">Navegador</span>
+              <span class="lvl-count">12 perguntas</span>
+            </button>
+            <button class="level-btn" data-level="20" type="button">
+              <span class="lvl-name">Almirante</span>
+              <span class="lvl-count">20 perguntas</span>
+            </button>
+          </div>
+        </div>
       </div>
       <img class="hero-photo" id="heroAvatar" alt="Profº Rubens">
     </div>
 
-    <div class="eyebrow">ROTAS DISPONÍVEIS</div>
+    <div class="eyebrow eyebrow-lg">ROTAS DISPONÍVEIS</div>
     <div class="grid" id="homeGrid"></div>
   </section>
 
@@ -878,7 +949,7 @@ const GAMES = [
     isMapGame:true
   },
 ];
-const QUESTIONS_PER_ROUND = 8;
+let QUESTIONS_PER_ROUND = 8;
 
 /* =========================================================
    HELPERS
@@ -1372,11 +1443,27 @@ if('serviceWorker' in navigator){
 }
 
 /* =========================================================
+   NÍVEL DE DIFICULDADE (Marinheiro / Navegador / Almirante)
+========================================================= */
+function initLevelSelect(){
+  const btns = document.querySelectorAll('.level-btn');
+  btns.forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      QUESTIONS_PER_ROUND = parseInt(btn.dataset.level, 10);
+      btns.forEach(b=> b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+  btns.forEach(b=> b.classList.toggle('active', parseInt(b.dataset.level,10) === QUESTIONS_PER_ROUND));
+}
+
+/* =========================================================
    INIT
 ========================================================= */
 document.getElementById('sidebarAvatar').src = IMG_PROF_ICON;
 document.getElementById('heroAvatar').src = IMG_PROF_HEADER;
 document.documentElement.style.setProperty('--hero-bg-img', `url("${IMG_HERO_MAP}")`);
+initLevelSelect();
 renderHomeGrid();
 showHome();
 </script>
