@@ -845,7 +845,7 @@ const MAP_DATA = {
     img: IMG_AMERICA_SUL,
     countries:[
       {name:"Brasil", x:0.579, y:0.381, color:[206,42,41], tol:0.26},
-      {name:"Argentina", x:0.484, y:0.694, color:[252,191,25], tol:0.22},
+      {name:"Argentina", x:0.484, y:0.694, color:[252,191,25], tol:0.22, ilhas:0.09},
       {name:"Colômbia", x:0.337, y:0.190, color:[252,191,25], tol:0.09},
       {name:"Venezuela", x:0.423, y:0.145, color:[41,104,184], tol:0.076},
       {name:"Peru", x:0.324, y:0.364, color:[41,104,184], tol:0.115},
@@ -1214,10 +1214,136 @@ let mapSession = null; // {continentKey, order:[], qIndex, score, answered}
 const mapCanvas = document.createElement('canvas');
 const mapCtx = mapCanvas.getContext('2d', { willReadFrequently: true });
 
+// Mapa de regiões: para cada pixel da imagem, guarda de qual país ele é
+// (0 = nenhum; i+1 = país de índice i em MAP_DATA[...].countries).
+// É montado "pintando" o país inteiro a partir do seu ponto central, então
+// vale o contorno real — países compridos como o Chile são aceitos de ponta a ponta.
+let mapLabels = null;
+
 function buildColorCanvas(img){
   mapCanvas.width = img.naturalWidth;
   mapCanvas.height = img.naturalHeight;
   mapCtx.drawImage(img, 0, 0, mapCanvas.width, mapCanvas.height);
+  mapLabels = null;
+  if(mapSession) buildCountryRegions(MAP_DATA[mapSession.continentKey].countries);
+}
+
+function buildCountryRegions(countries){
+  const w = mapCanvas.width, h = mapCanvas.height;
+  if(!w || !h) return;
+  const px = mapCtx.getImageData(0, 0, w, h).data;
+  const labels = new Uint8Array(w*h);
+  const lim2 = MAP_COLOR_MATCH_THRESHOLD * MAP_COLOR_MATCH_THRESHOLD;
+  const stack = new Int32Array(w*h);
+  countries.forEach((c, idx)=>{
+    const [cr,cg,cb] = c.color;
+    const matches = (p)=>{
+      const o = p*4, dr = px[o]-cr, dg = px[o+1]-cg, db = px[o+2]-cb;
+      return dr*dr + dg*dg + db*db < lim2;
+    };
+    // ponto de partida: o pixel da cor do país mais próximo do centro informado
+    const sx = Math.round(c.x*w), sy = Math.round(c.y*h);
+    let seed = -1;
+    for(let r=0; r<=30 && seed<0; r++){
+      for(let dy=-r; dy<=r && seed<0; dy++){
+        for(let dx=-r; dx<=r; dx++){
+          if(Math.max(Math.abs(dx),Math.abs(dy)) !== r) continue;
+          const x = sx+dx, y = sy+dy;
+          if(x<0 || y<0 || x>=w || y>=h) continue;
+          const p = y*w+x;
+          if(!labels[p] && matches(p)){ seed = p; break; }
+        }
+      }
+    }
+    if(seed < 0) return;
+    let top = 0;
+    stack[top++] = seed; labels[seed] = idx+1;
+    while(top){
+      const p = stack[--top], x = p % w;
+      if(x>0   && !labels[p-1] && matches(p-1)){ labels[p-1] = idx+1; stack[top++] = p-1; }
+      if(x<w-1 && !labels[p+1] && matches(p+1)){ labels[p+1] = idx+1; stack[top++] = p+1; }
+      if(p>=w  && !labels[p-w] && matches(p-w)){ labels[p-w] = idx+1; stack[top++] = p-w; }
+      if(p<w*(h-1) && !labels[p+w] && matches(p+w)){ labels[p+w] = idx+1; stack[top++] = p+w; }
+    }
+  });
+  mapLabels = labels;
+}
+
+function labelAt(nx, ny){
+  const w = mapCanvas.width, h = mapCanvas.height;
+  nx = Math.round(nx); ny = Math.round(ny);
+  if(nx<0 || ny<0 || nx>=w || ny>=h) return 0;
+  return mapLabels[ny*w + nx];
+}
+
+// Diz se o clique (em pixels da imagem) caiu no país de índice targetIdx.
+function clickHitsCountry(nx, ny, targetIdx, target){
+  const want = targetIdx + 1;
+  const w = mapCanvas.width, h = mapCanvas.height;
+  nx = Math.max(0, Math.min(w-1, Math.round(nx)));
+  ny = Math.max(0, Math.min(h-1, Math.round(ny)));
+  const here = labelAt(nx, ny);
+  if(here) return here === want;
+  let cor = colorAt(nx, ny);
+  const onBackground = isBackgroundColor(cor);
+  if(onBackground){
+    // clique em cima de uma linha de fronteira ou um tiquinho fora do contorno:
+    // vale o país mais próximo
+    const radii = [3,6,9,13,18,24];
+    for(const r of radii){
+      for(let i=0;i<16;i++){
+        const ang = (i/16)*Math.PI*2;
+        const l = labelAt(nx + Math.cos(ang)*r, ny + Math.sin(ang)*r);
+        if(l) return l === want;
+      }
+    }
+    // nada do contorno principal por perto: pode ser a beirada de uma ilha
+    cor = findNearbyColor(nx, ny);
+    if(isBackgroundColor(cor)) return false;
+  }
+  // Pedaço colorido fora do contorno principal (ilha): precisa ter a cor do país e...
+  if(colorDist(cor, target.color) >= MAP_COLOR_MATCH_THRESHOLD) return false;
+  // ...estar dentro do círculo em volta do centro (regra antiga do jogo), ou...
+  const cdx = nx - target.x * w, cdy = ny - target.y * h;
+  if(Math.sqrt(cdx*cdx + cdy*cdy) <= target.tol * w) return true;
+  if(onBackground) return false;
+  // ...ser um pedacinho pequeno (ilha de verdade, não um país vizinho da mesma cor)
+  // bem perto do contorno do país.
+  if(!isSmallPiece(nx, ny, target.color)) return false;
+  // (alcance padrão de 5% da largura; "ilhas" no país aumenta, ex.: Terra do Fogo)
+  const R = Math.round(w * (target.ilhas || 0.05));
+  for(let dy=-R; dy<=R; dy+=2){
+    for(let dx=-R; dx<=R; dx+=2){
+      if(dx*dx + dy*dy <= R*R && labelAt(nx+dx, ny+dy) === want) return true;
+    }
+  }
+  return false;
+}
+
+// Mede o pedaço colorido onde o clique caiu; "pequeno" = até 0,2% da imagem.
+function isSmallPiece(nx, ny, color){
+  const w = mapCanvas.width, h = mapCanvas.height;
+  const px = mapCtx.getImageData(0, 0, w, h).data;
+  const lim2 = MAP_COLOR_MATCH_THRESHOLD * MAP_COLOR_MATCH_THRESHOLD;
+  const max = Math.round(w * h * 0.002);
+  const seen = new Uint8Array(w*h);
+  const ok = (p)=>{
+    if(seen[p] || mapLabels[p]) return false;
+    const o = p*4, dr = px[o]-color[0], dg = px[o+1]-color[1], db = px[o+2]-color[2];
+    return dr*dr + dg*dg + db*db < lim2;
+  };
+  const stack = [ny*w + nx];
+  seen[stack[0]] = 1;
+  let count = 0;
+  while(stack.length){
+    const p = stack.pop(), x = p % w;
+    if(++count > max) return false;
+    if(x>0   && ok(p-1)){ seen[p-1] = 1; stack.push(p-1); }
+    if(x<w-1 && ok(p+1)){ seen[p+1] = 1; stack.push(p+1); }
+    if(p>=w  && ok(p-w)){ seen[p-w] = 1; stack.push(p-w); }
+    if(p<w*(h-1) && ok(p+w)){ seen[p+w] = 1; stack.push(p+w); }
+  }
+  return true;
 }
 
 function colorAt(nx, ny){
@@ -1294,6 +1420,7 @@ function startMapContinent(key){
   document.getElementById('mapBackBtn').onclick = openMapGame;
 
   const img = document.getElementById('mapImage');
+  mapLabels = null;
   img.onload = ()=> buildColorCanvas(img);
   img.src = data.img;
   if(img.complete && img.naturalWidth) buildColorCanvas(img);
@@ -1337,22 +1464,14 @@ document.getElementById('mapStage').addEventListener('click', (e)=>{
 
   const target = mapSession.order[mapSession.qIndex];
 
-  // 1) a cor do pixel clicado precisa bater com a cor do país-alvo
-  let colorOk = false;
-  if(mapCanvas.width){
-    const nx = xFrac * mapCanvas.width;
-    const ny = yFrac * mapCanvas.height;
-    const clickedColor = findNearbyColor(nx, ny);
-    colorOk = colorDist(clickedColor, target.color) < MAP_COLOR_MATCH_THRESHOLD;
+  // O clique vale se cair dentro do contorno real do país-alvo
+  // (em qualquer ponto dele, não só perto do centro).
+  if(!mapLabels && mapCanvas.width) buildCountryRegions(MAP_DATA[mapSession.continentKey].countries);
+  let isCorrect = false;
+  if(mapLabels){
+    const countries = MAP_DATA[mapSession.continentKey].countries;
+    isCorrect = clickHitsCountry(xFrac * mapCanvas.width, yFrac * mapCanvas.height, countries.indexOf(target), target);
   }
-  // 2) e o clique precisa estar dentro da área aproximada do país-alvo
-  //    (evita falsos positivos quando dois países têm cores parecidas)
-  const dx = (xFrac - target.x) * rect.width;
-  const dy = (yFrac - target.y) * rect.height;
-  const dist = Math.sqrt(dx*dx + dy*dy);
-  const proximityOk = dist <= target.tol * rect.width;
-
-  const isCorrect = colorOk && proximityOk;
 
   mapSession.answered = true;
   placeMarker(xFrac, yFrac, isCorrect ? 'hit' : 'miss');
