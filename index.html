@@ -1107,6 +1107,10 @@ function startGame(id){
   document.getElementById('gameTitle').textContent = game.name;
   document.getElementById('gameSubtitle').textContent = game.desc;
   document.getElementById('qTotal').textContent = QUESTIONS_PER_ROUND;
+  // o botão vira "Jogar novamente" no fim da rodada; aqui ele volta a ser "Próxima"
+  const nextBtn = document.getElementById('nextBtn');
+  nextBtn.textContent = "Próxima →";
+  nextBtn.onclick = goToNextQuestion;
   loadQuestion();
 }
 
@@ -1180,14 +1184,15 @@ function answer(value, btnEl){
   document.getElementById('nextBtn').classList.add('show');
 }
 
-document.getElementById('nextBtn').onclick = ()=>{
+function goToNextQuestion(){
   session.qIndex++;
   if(session.qIndex >= QUESTIONS_PER_ROUND){
     finishRound();
   } else {
     loadQuestion();
   }
-};
+}
+document.getElementById('nextBtn').onclick = goToNextQuestion;
 
 function finishRound(){
   const s = scores[session.gameId];
